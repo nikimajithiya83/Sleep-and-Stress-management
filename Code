@@ -1,0 +1,305 @@
+import pyaudio
+import wave
+import numpy as np
+import librosa
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.popup import Popup
+from kivy.uix.togglebutton import ToggleButton
+from kivy.uix.gridlayout import GridLayout
+
+class StressApp(App):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.current_question_index = 0
+        self.questions = [
+            ("Do you feel rested when you wake up?", ["Yes", "No"]),
+            ("Do you have trouble falling asleep or staying asleep?", ["Yes", "No"]),
+            ("Is your sleeping environment quiet and dark?", ["Yes", "No"]),
+            ("Do you use any devices (phone, TV) before bed?", ["Yes", "No"]),
+            ("Do you feel like withdrawing from family, friends and isolating yourself?", ["Rarely", "Sometimes", "Often"]),
+            ("How often do you feel overwhelmed or anxious?", ["Rarely", "Sometimes", "Often"]),
+            ("Do you experience any physical symptoms of stress, such as headaches or muscle tension?", ["Yes", "No"]),
+            ("How often do you feel fatigued or low in energy?", ["Rarely", "Sometimes", "Often"]),
+            ("Do you feel irritable, angry or annoyed over trivial issues?", ["Rarely", "Sometimes", "Often"]),
+            ("Do you find it difficult to relax even when you have free time?", ["Yes", "No"]),
+            ("Do you find it difficult to concentrate on tasks?", ["Yes", "No"]),
+            ("Do you feel that your free time is truly restful and rejuvenating?", ["Yes", "Sometimes", "No"])
+        ]
+        self.answer_weights = [
+            {"Yes": 0, "No": 2},
+            {"Yes": 2, "No": 0},
+            {"Yes": 0, "No": 2},
+            {"Yes": 2, "No": 0},
+            {"Rarely": 0, "Sometimes": 1, "Often": 2},
+            {"Rarely": 0, "Sometimes": 1, "Often": 2},
+            {"Yes": 2, "No": 0},
+            {"Rarely": 0, "Sometimes": 1, "Often": 2},
+            {"Rarely": 0, "Sometimes": 1, "Often": 2},
+            {"Yes": 2, "No": 0},
+            {"Yes": 2, "No": 0},
+            {"Yes": 0, "Sometimes": 1, "No": 2}
+        ]
+        self.answers = [None] * len(self.questions)
+        self.audio_features = None
+        self.audio_evaluation = None
+
+    def build(self):
+        self.root = self.create_startup_screen()
+        return self.root
+
+    def create_startup_screen(self):
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+
+        title_label = Label(text="Welcome to the Stress and Sleep Analysis App", font_size='36sp', size_hint_y=None, height=80)
+        layout.add_widget(title_label)
+
+        instruction_label = Label(text="Please choose an option to proceed", font_size='24sp', size_hint_y=None, height=80)
+        layout.add_widget(instruction_label)
+
+        button_layout = BoxLayout(size_hint_y=None, height=100, spacing=10)
+
+        quiz_button = Button(text="Take the Quiz", size_hint=(0.5, 1))
+        quiz_button.bind(on_press=self.start_quiz)
+
+        audio_button = Button(text="Record Audio", size_hint=(0.5, 1))
+        audio_button.bind(on_press=self.start_audio_recording)
+
+        button_layout.add_widget(quiz_button)
+        button_layout.add_widget(audio_button)
+
+        layout.add_widget(button_layout)
+        return layout
+
+    def start_quiz(self, instance):
+        self.root.clear_widgets()
+        quiz_layout = self.create_quiz_layout()
+        self.root.add_widget(quiz_layout)
+
+    def create_quiz_layout(self):
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+
+        question, options = self.questions[self.current_question_index]
+
+        question_label = Label(
+            text=f"Question {self.current_question_index + 1}: {question}",
+            font_size='24sp',
+            size_hint_y=None,
+            height=100
+        )
+        layout.add_widget(question_label)
+
+        button_layout = GridLayout(cols=2, spacing=10, size_hint_y=None, height=200)
+
+        for option in options:
+            btn = ToggleButton(text=option, group="answers", size_hint=(0.5, None), height=50)
+            btn.bind(on_press=lambda instance, ans=option: self.record_answer(ans))
+            button_layout.add_widget(btn)
+
+        layout.add_widget(button_layout)
+
+        next_button = Button(text="Next", size_hint=(1, None), height=50)
+        next_button.bind(on_press=self.next_question)
+        layout.add_widget(next_button)
+
+        return layout
+
+    def record_answer(self, answer):
+        self.answers[self.current_question_index] = answer
+
+    def next_question(self, instance):
+        if self.current_question_index < len(self.questions) - 1:
+            self.current_question_index += 1
+            self.root.clear_widgets()
+            quiz_layout = self.create_quiz_layout()
+            self.root.add_widget(quiz_layout)
+        else:
+            self.show_results()
+
+    def show_results(self):
+        self.root.clear_widgets()
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+
+        total_score = sum(self.answer_weights[i][ans] for i, ans in enumerate(self.answers) if ans is not None)
+
+        stress_level, solutions = self.determine_stress_level(total_score)
+
+        result_label = Label(
+            text=f"Your total stress score is: {total_score}\n"
+                 f"Stress Level: {stress_level}\n"
+                 f"Solutions:\n" + "\n".join(solutions),
+            font_size='24sp',
+            size_hint_y=None,
+            height=300
+        )
+        layout.add_widget(result_label)
+
+        back_button = Button(text="Back to Start", size_hint=(1, None), height=50)
+        back_button.bind(on_press=lambda instance: self.root.clear_widgets() or self.root.add_widget(self.create_startup_screen()))
+        layout.add_widget(back_button)
+
+        self.root.add_widget(layout)
+
+    def determine_stress_level(self, total_score):
+        if total_score <= 10:
+            stress_level = "Low"
+            solutions = [
+                "Great job! Keep maintaining a balanced lifestyle.",
+                "Allocate specific time for relaxation activities such as reading, walking, or pursuing hobbies.",
+                "Stay active and engage in hobbies that you enjoy."
+            ]
+        elif 11 <= total_score <= 20:
+            stress_level = "Medium"
+            solutions = [
+                "Engage in light physical activity, like stretching or yoga, to relieve muscle tension and boost energy levels.",
+                "Consume liquids that keep you hydrated and fresh throughout the day.",
+                "Make sure to take breaks and prioritize self-care."
+            ]
+        else:
+            stress_level = "High"
+            solutions = [
+                "It's important to seek support from friends, family, or a professional.",
+                "Consider talking to a therapist or counselor for guidance.",
+                "Engage in stress-reducing activities like exercise, mindfulness, or journaling."
+            ]
+        return stress_level, solutions
+
+    def start_audio_recording(self, instance):
+        self.record_audio_button()
+
+    def record_audio_button(self):
+        audio_file = "audio.wav"
+        if not self.record_audio(filename=audio_file, duration=5):
+            return  # Exit if no voice detected
+        self.audio_features = self.analyze_audio(audio_file)  # Call the analyze_audio function
+        self.audio_evaluation = self.evaluate_stress(self.audio_features)  # Call the evaluate_stress function
+        
+        stress_level, solutions = self.determine_stress_level_from_audio(self.audio_evaluation)
+
+        self.show_popup("Audio Analysis Results", 
+                        f"Stress Level: {stress_level}\nSolutions:\n" + "\n".join(solutions))
+
+    def record_audio(self, filename="audio.wav", duration=5, rate=44100, channels=1):
+        chunk = 1024
+        format = pyaudio.paInt16
+
+        audio = pyaudio.PyAudio()
+        print("Listening for human voice...")
+        stream = audio.open(format=format, channels=channels,
+                            rate=rate, input=True, frames_per_buffer=chunk)
+
+        frames = []
+        voice_detected = False
+
+        for _ in range(0, int(rate / chunk * duration)):
+            data = stream.read(chunk)
+            audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            rms_energy = np.sqrt(np.mean(audio_np ** 2))
+
+            if rms_energy > 0.02:
+                voice_detected = True
+                frames.append(data)
+
+        if voice_detected:
+            print("Recording finished.")
+            with wave.open(filename, "wb") as wf:
+                wf.setnchannels(channels)
+                wf.setsampwidth(audio.get_sample_size(format))
+                wf.setframerate(rate)
+                wf.writeframes(b"".join(frames))
+        else:
+            print("No human voice detected. Please try again.")
+            self.show_popup("Recording Error", "No human voice detected. Please try again.")
+            stream.stop_stream()
+            stream.close()
+            audio.terminate()
+            return False
+
+        stream.stop_stream()
+        stream.close()
+        audio.terminate()
+        return True
+
+    def analyze_audio(self, filename):
+        y, sr = librosa.load(filename, sr=None)
+
+        pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
+        pitch = [pitches[index, i] for i in range(pitches.shape[1]) if (index := magnitudes[:, i].argmax()) and pitches[index, i] > 0]
+        avg_pitch = np.mean(pitch) if pitch else 0
+        jitter = np.std(np.diff(pitch)) / avg_pitch if avg_pitch > 0 else 0
+        frame_energy = librosa.feature.rms(y=y).flatten()
+        shimmer = np.std(frame_energy) / np.mean(frame_energy) if np.mean(frame_energy) > 0 else 0
+        spectral_flux = np.mean(np.diff(librosa.feature.spectral_centroid(y=y, sr=sr)))
+        energy = np.sum(librosa.feature.rms(y=y))
+        spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
+        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+
+        return {
+            "average_pitch": avg_pitch,
+            "jitter": jitter,
+            "shimmer": shimmer,
+            "spectral_flux": spectral_flux,
+            "energy": energy,
+            "spectral_centroid": spectral_centroid,
+            "mfcc": np.mean(mfccs, axis=1),
+            "mfcc_variance": np.var(mfccs, axis=1),
+        }
+
+    def evaluate_stress(self, features):
+        avg_pitch = features["average_pitch"]
+        jitter = features["jitter"]
+        shimmer = features["shimmer"]
+        spectral_flux = features["spectral_flux"]
+        energy = features["energy"]
+
+        is_stressed = (
+            avg_pitch > 200
+            and jitter > 0.02
+            and shimmer > 0.03
+            and spectral_flux > 1000
+            and energy > 0.05
+        )
+        is_normal = (
+            avg_pitch < 200
+            and jitter < 0.02
+            and shimmer < 0.03
+            and spectral_flux < 1000
+        )
+
+        return {
+            "stressed": is_stressed,
+            "normal": is_normal,
+        }
+
+    def determine_stress_level_from_audio(self, evaluation):
+        if evaluation["stressed"]:
+            stress_level = "High"
+            solutions = [
+                "It's important to seek support from friends, family, or a professional.",
+                "Consider talking to a therapist or counselor for guidance.",
+                "Engage in stress-reducing activities like exercise, mindfulness, or journaling."
+            ]
+        elif evaluation["normal"]:
+            stress_level = "Low"
+            solutions = [
+                "Great job! Keep maintaining a balanced lifestyle.",
+                "Allocate specific time for relaxation activities such as reading, walking, or pursuing hobbies.",
+                "Stay active and engage in hobbies that you enjoy."
+            ]
+        else:
+            stress_level = "Medium"
+            solutions = [
+                "Engage in light physical activity, like stretching or yoga, to relieve muscle tension and boost energy levels.",
+                "Consume liquids that keep you hydrated and fresh throughout the day.",
+                "Make sure to take breaks and prioritize self-care."
+            ]
+        return stress_level, solutions
+
+    def show_popup(self, title, message):
+        popup = Popup(title=title, content=Label(text=message), size_hint=(None, None), size=(400, 200))
+        popup.open()
+
+if __name__ == "__main__":
+    StressApp().run()
